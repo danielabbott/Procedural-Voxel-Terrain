@@ -94,17 +94,12 @@ public class ChunkData
                 int i = h;
                 int layerIndex = 0;
                 int layerBlocksRemaining = layers[l, 0];
-                for (; i >= 0; i--)
+                for (; i >= cy * CHUNK_SIZE; i--)
                 {
                     
                     if (i < (cy + 1) * CHUNK_SIZE)
                     {
                         initialSetBlock(x, i - cy * CHUNK_SIZE, z, (uint)layers[l, layerIndex * 2 + 1]);
-
-                        if (i <= cy * CHUNK_SIZE)
-                        {
-                            break;
-                        }
                     }
 
                     layerBlocksRemaining--;
@@ -253,6 +248,13 @@ public class ChunkData
             new Vector3(0,0,1),
     };
 
+    private static readonly int MAX_FACES = Constants.CHUNK_SIZE * Constants.CHUNK_SIZE * Constants.CHUNK_SIZE * 6;
+
+    private static List<Vector3> vertices = new List<Vector3>(MAX_FACES * 4);
+    private static List<Vector3> normals = new List<Vector3>(MAX_FACES * 4);
+    private static List<int> tris = new List<int>(MAX_FACES * 2 * 3);
+    private static List<Color32> colourArray = new List<Color32>(MAX_FACES * 4);
+
     public void generateMesh()
     {
         int CHUNK_SIZE = Constants.CHUNK_SIZE;
@@ -260,11 +262,10 @@ public class ChunkData
 
         mesh = new Mesh();
 
-        List<Vector3> vertices = new List<Vector3>(visibleFaces * 4);
-        List<Vector3> normals = new List<Vector3>(visibleFaces * 4);
-        List<int> tris = new List<int>(visibleFaces * 2 * 3);
-
-        List<Color32> colourArray = new List<Color32>(visibleFaces * 4);
+        vertices.Clear();
+        normals.Clear();
+        tris.Clear();
+        colourArray.Clear();
 
 
 
@@ -413,7 +414,7 @@ public class ChunkData
         return x * CHUNK_SIZE * CHUNK_SIZE + z * CHUNK_SIZE + y;
     }
 
-    private Vector3Int blockIndexToPosition(int i)
+    private static Vector3Int blockIndexToPosition(int i)
     {
         int CHUNK_SIZE = Constants.CHUNK_SIZE;
         return new Vector3Int(i / (CHUNK_SIZE * CHUNK_SIZE), i % CHUNK_SIZE, (i % (CHUNK_SIZE * CHUNK_SIZE)) / CHUNK_SIZE);
@@ -472,6 +473,7 @@ public class ChunkData
     // assumes that block is currently air and being set to non-air
     // no input validation
     // Does not update solidBlocks
+    // Assumes blocks are set from top to bottom
     private void initialSetBlock(int x, int y, int z, uint colour)
     {
         int CHUNK_SIZE = Constants.CHUNK_SIZE;
@@ -480,7 +482,7 @@ public class ChunkData
 
         visibleFaces += (x == 0 || blocks[blockPositionToIndex(x - 1, y, z)] == 0) ? 1 : -1;
         visibleFaces += (x == CHUNK_SIZE - 1 || blocks[blockPositionToIndex(x + 1, y, z)] == 0) ? 1 : -1;
-        visibleFaces += (y == 0 || blocks[blockPositionToIndex(x, y - 1, z)] == 0) ? 1 : -1;
+        visibleFaces += 1;
         visibleFaces += (y == CHUNK_SIZE - 1 || blocks[blockPositionToIndex(x, y + 1, z)] == 0) ? 1 : -1;
         visibleFaces += (z == 0 || blocks[blockPositionToIndex(x, y, z - 1)] == 0) ? 1 : -1;
         visibleFaces += (z == CHUNK_SIZE - 1 || blocks[blockPositionToIndex(x, y, z + 1)] == 0) ? 1 : -1;

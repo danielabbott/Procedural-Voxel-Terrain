@@ -30,4 +30,15 @@ public class World
         return h;
     }
 
+    public static Noise baseTerrainNoise;
+    public static Noise continentNoise;
+    public static Noise mountainNoise;
+
+    public static void createNoiseObjects(int seed)
+    {
+        baseTerrainNoise = new Noise(seed * 3 + 0);
+        continentNoise = new Noise(seed * 3 + 0);
+        mountainNoise = new Noise(seed * 3 + 2);
+    }
+
 }

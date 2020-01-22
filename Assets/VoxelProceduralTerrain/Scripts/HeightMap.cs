@@ -17,6 +17,10 @@ public class HeightMap
         values = null;
     }
 
+    private static float[,] baseTerrainNoiseData = new float[Constants.CHUNK_SIZE, Constants.CHUNK_SIZE];
+    private static float[,] continentData = new float[Constants.CHUNK_SIZE, Constants.CHUNK_SIZE];
+    private static float[,] mountainNoiseData = new float[Constants.CHUNK_SIZE, Constants.CHUNK_SIZE];
+
     public void generate(int seed)
     {
         if(values != null)
@@ -27,17 +31,12 @@ public class HeightMap
         int CHUNK_SIZE = Constants.CHUNK_SIZE;
         values = new ushort[CHUNK_SIZE, CHUNK_SIZE];
 
-        float[,] baseTerrainNoiseData = new float[CHUNK_SIZE, CHUNK_SIZE];
-        float[,] continentData = new float[CHUNK_SIZE, CHUNK_SIZE];
-        float[,] mountainNoiseData = new float[CHUNK_SIZE, CHUNK_SIZE];
+        
 
         float bsz = Constants.BLOCK_SIZE;
-        Noise baseTerrainNoise = new Noise(seed * 3 + 0);
-        Noise continentNoise = new Noise(seed * 3 + 0);
-        Noise mountainNoise = new Noise(seed * 3 + 2);
-        baseTerrainNoise.generate(baseTerrainNoiseData, chunkX * CHUNK_SIZE, chunkZ * CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE, bsz, bsz, 0.02f, 2, 3, 0.8f);
-        continentNoise.generate(continentData, chunkX * CHUNK_SIZE, chunkZ * CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE, bsz, bsz, 0.0001f, 4, 4, 0.2f);
-        mountainNoise.generate(mountainNoiseData, chunkX * CHUNK_SIZE, chunkZ * CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE, bsz * 0.01f, bsz * 0.01f);
+        World.baseTerrainNoise.generate(baseTerrainNoiseData, chunkX * CHUNK_SIZE, chunkZ * CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE, bsz, bsz, 0.02f, 2, 3, 0.8f);
+        World.continentNoise.generate(continentData, chunkX * CHUNK_SIZE, chunkZ * CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE, bsz, bsz, 0.0001f, 4, 4, 0.2f);
+        World.mountainNoise.generate(mountainNoiseData, chunkX * CHUNK_SIZE, chunkZ * CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE, bsz * 0.01f, bsz * 0.01f);
 
 
         for (int x = 0; x < CHUNK_SIZE; x++)

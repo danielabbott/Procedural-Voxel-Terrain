@@ -68,6 +68,8 @@ public class TerrainGen : MonoBehaviour
 
     void Start()
     {
+        World.createNoiseObjects(Constants.WORLD_SEED);
+
         //setWorldHeightMapAsTexture();
         //return;
 
@@ -77,7 +79,8 @@ public class TerrainGen : MonoBehaviour
         int poscz = 20;
 
         int area = 10;
-        HeightMap[,] heightMaps = new HeightMap[area*2+1, area*2+1];
+        HeightMap[,] heightMaps = new HeightMap[area * 2 + 1, area * 2 + 1];
+        ChunkData[,] chunks = new ChunkData[area * 2 + 1, area * 2 + 1];
         for (int y = 0; y < 19; y++)
         {
             for (int x = -area; x <= area; x++)
@@ -92,6 +95,7 @@ public class TerrainGen : MonoBehaviour
                         Profiler.EndSample();
                     }
                     ChunkData c = new ChunkData(x, y, z);
+                    chunks[x + area, z + area] = c;
                     Profiler.BeginSample("Generate block data");
                     c.generate(heightMaps[x + area, z + area]);
                     Profiler.EndSample();
