@@ -2,23 +2,25 @@
 using UnityEngine;
 using System.Collections.Generic;
 using System;
+using System.Collections;
 
 public class ChunkData
 {
-    int cx;
-    int cy;
-    int cz;
-
-
     int solidBlocks = 0;
-    int visibleFaces = 0;
+
+    // Code for counting number of visible faces is disabled.
+    //int visibleFaces = 0;
+
     int fluidBlocks = 0;
 
     // If bit 31 is 1 then it is fluid, else solid
     // Bits 0 - 24 are the colour
     uint[] blocks = null;
 
-    Mesh mesh = null;
+    // -1048575 to +1048575 (chunks)
+    public int cx;
+    public int cy;
+    public int cz;
 
     public ChunkData(int x_, int y_, int z_)
     {
@@ -57,9 +59,8 @@ public class ChunkData
         0, 0,
         0, 0,
     }
-};
+    };
 
-    // Scale is in blocks
     public void generate(HeightMap heightMap)
     {
         int CHUNK_SIZE = Constants.CHUNK_SIZE;
@@ -81,14 +82,18 @@ public class ChunkData
         {
             for (int z = 0; z < CHUNK_SIZE; z++)
             {
+                // For each column, start at the topmost block and fill downwards
+
                 ushort h_ = heightMap.values[x, z];
                 int h = h_ & 0x7fff;
 
-                if(h < cy * CHUNK_SIZE)
+                if (h < cy * CHUNK_SIZE)
                 {
+                    // This column is air.
                     continue;
                 }
 
+                // Index into layers array (normal layers / ocean floor layers)
                 int l = ((h_ & 0x8000) != 0) ? 1 : 0;
 
                 int i = h;
@@ -96,7 +101,7 @@ public class ChunkData
                 int layerBlocksRemaining = layers[l, 0];
                 for (; i >= cy * CHUNK_SIZE; i--)
                 {
-                    
+
                     if (i < (cy + 1) * CHUNK_SIZE)
                     {
                         initialSetBlock(x, i - cy * CHUNK_SIZE, z, (uint)layers[l, layerIndex * 2 + 1]);
@@ -110,6 +115,7 @@ public class ChunkData
                         layerBlocksRemaining = layers[l, layerIndex * 2];
                     }
                 }
+                // Keep track of how many blocks have been generated
                 solidBlocks += h - cy * CHUNK_SIZE;
 
 
@@ -118,11 +124,15 @@ public class ChunkData
 
         if (solidBlocks == 0)
         {
+            // Chunk was air, free memory.
             blocks = null;
         }
     }
 
-    private static int CHUNK_SIZE = Constants.CHUNK_SIZE;
+    private readonly static int CHUNK_SIZE = Constants.CHUNK_SIZE;
+
+    // Constant data for mesh generation algorithm
+    // The algortihm runs 6 times (once for each direction), using a different array index each time
 
     private static readonly int[,] startingBlocks = new int[,]
         {
@@ -250,22 +260,62 @@ public class ChunkData
 
     private static readonly int MAX_FACES = Constants.CHUNK_SIZE * Constants.CHUNK_SIZE * Constants.CHUNK_SIZE * 6;
 
-    private static List<Vector3> vertices = new List<Vector3>(MAX_FACES * 4);
-    private static List<Vector3> normals = new List<Vector3>(MAX_FACES * 4);
-    private static List<int> tris = new List<int>(MAX_FACES * 2 * 3);
-    private static List<Color32> colourArray = new List<Color32>(MAX_FACES * 4);
+    class MeshData
+    {
+        public List<Vector3> vertices = new List<Vector3>(MAX_FACES * 4);
+        public List<Vector3> normals = new List<Vector3>(MAX_FACES * 4);
+        public List<int> tris = new List<int>(MAX_FACES * 2 * 3);
+        public List<Color32> colourArray = new List<Color32>(MAX_FACES * 4);
+    }
 
-    public void generateMesh()
+    // TODO These can't be static if we want multiple chunk loading threads. Make it thread-local
+
+    private static MeshData[] meshDataObjects = new MeshData[6];
+    private static volatile bool[] meshDataInUse = new bool[6];
+
+    public static void createMeshDataLists()
+    {
+        for (int i = 0; i < 6; i++)
+        {
+            meshDataObjects[i] = new MeshData();
+        }
+    }
+
+
+    public int generateMesh()
     {
         int CHUNK_SIZE = Constants.CHUNK_SIZE;
 
+        MeshData md = null;
+        int mdI = -1;
 
-        mesh = new Mesh();
+        // Find a mesh data object to fill
+        lock (meshDataInUse)
+        {
+            for (int i = 0; i < 6; i++)
+            {
+                if (!meshDataInUse[i])
+                {
+                    meshDataInUse[i] = true;
+                    md = meshDataObjects[i];
+                    mdI = i;
+                    break;
+                }
+            }
+        }
 
-        vertices.Clear();
-        normals.Clear();
-        tris.Clear();
-        colourArray.Clear();
+        if (md == null)
+        {
+            // No mesh data objects available
+            // Return error (-1)
+            return -1;
+        }
+
+
+        md.vertices.Clear();
+        md.normals.Clear();
+        md.tris.Clear();
+        md.colourArray.Clear();
 
 
 
@@ -278,16 +328,23 @@ public class ChunkData
 
             for (int layer = 0; layer < CHUNK_SIZE; layer++)
             {
-                // For each layer of faces
+                // For each layer (cross-section) of faces
 
                 for (int i = 0; i < CHUNK_SIZE; i++)
                 {
+                    // For each row of faces
+
+                    // Keep track of how many faces of the same colour are in a row
+                    // They are combined into one
+                    // A 'block strip' is multiple square block faces combined into a rectangle
                     uint blockStripColour = 0;
                     int blockStripLength = 0;
                     Vector3Int blockStripStart = new Vector3Int();
 
                     for (int j = 0; j < CHUNK_SIZE; j++, blockIndex += nextBlockIncrements[face])
                     {
+                        // For each face in the row
+
                         uint thisBlock = blocks[blockIndex];
                         uint adjacentBlock = 0;
                         if (layer > 0)
@@ -297,8 +354,12 @@ public class ChunkData
 
                         if (thisBlock != 0 && adjacentBlock == 0)
                         {
+                            // This face is visible
+
                             if (blockStripLength == 0)
                             {
+                                // Start of strip
+
                                 blockStripLength = 1;
                                 blockStripColour = thisBlock;
                                 blockStripStart = blockIndexToPosition(blockIndex);
@@ -308,11 +369,18 @@ public class ChunkData
                             }
                             else if (blockStripColour == thisBlock)
                             {
+                                // Continue strip
+
                                 blockStripLength++;
                             }
                             else
                             {
-                                meshAddFace(face, blockIndex, tris, vertices, normals, colourArray, blockStripLength, blockStripColour, blockStripStart);
+                                // New strip
+
+                                // Add previous strip
+                                meshAddFace(face, blockIndex, md.tris, md.vertices, md.normals, md.colourArray, blockStripLength, blockStripColour, blockStripStart);
+                                
+                                // New strip
                                 blockStripLength = 1;
                                 blockStripColour = thisBlock;
                                 blockStripStart = blockIndexToPosition(blockIndex);
@@ -323,7 +391,8 @@ public class ChunkData
                         }
                         else if (blockStripLength != 0)
                         {
-                            meshAddFace(face, blockIndex, tris, vertices, normals, colourArray, blockStripLength, blockStripColour, blockStripStart);
+                            // End of strip
+                            meshAddFace(face, blockIndex, md.tris, md.vertices, md.normals, md.colourArray, blockStripLength, blockStripColour, blockStripStart);
                             blockStripLength = 0;
                         }
 
@@ -331,7 +400,8 @@ public class ChunkData
                     }
                     if (blockStripLength != 0)
                     {
-                        meshAddFace(face, blockIndex, tris, vertices, normals, colourArray, blockStripLength, blockStripColour, blockStripStart);
+                        // Add last strip
+                        meshAddFace(face, blockIndex, md.tris, md.vertices, md.normals, md.colourArray, blockStripLength, blockStripColour, blockStripStart);
                     }
                     blockIndex -= CHUNK_SIZE * nextBlockIncrements[face];
                     blockIndex += nextRowIncrements[face];
@@ -341,13 +411,24 @@ public class ChunkData
             }
         }
 
-        mesh.SetVertices(vertices);
-        mesh.SetNormals(normals);
-        mesh.SetColors(colourArray);
-        mesh.SetTriangles(tris, 0, false);
+        return mdI;
+    }
+
+    public Mesh createMesh(int i)
+    {
+        Mesh mesh = new Mesh();
+        mesh.SetVertices(meshDataObjects[i].vertices);
+        mesh.SetNormals(meshDataObjects[i].normals);
+        mesh.SetColors(meshDataObjects[i].colourArray);
+        mesh.SetTriangles(meshDataObjects[i].tris, 0, false);
         mesh.bounds = new Bounds(new Vector3(CHUNK_SIZE * 0.5f, CHUNK_SIZE * 0.5f, CHUNK_SIZE * 0.5f),
             new Vector3(CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE));
         mesh.UploadMeshData(true);
+        lock (meshDataInUse)
+        {
+            meshDataInUse[i] = false;
+        }
+        return mesh;
     }
 
     private void meshAddFace(int face, int blockIndex, List<int> tris, List<Vector3> vertices, List<Vector3> normals, List<Color32> colourArray, int blockStripLength, uint blockStripColour, Vector3Int blockStripStart)
@@ -403,10 +484,6 @@ public class ChunkData
         colourArray.Add(c);
     }
 
-    public Mesh getMesh()
-    {
-        return mesh;
-    }
 
     private int blockPositionToIndex(int x, int y, int z)
     {
@@ -439,12 +516,12 @@ public class ChunkData
 
 
 
-            visibleFaces += (x == 0 || blocks[blockPositionToIndex(x - 1, y, z)] == 0) ? 1 : -1;
+            /*visibleFaces += (x == 0 || blocks[blockPositionToIndex(x - 1, y, z)] == 0) ? 1 : -1;
             visibleFaces += (x == CHUNK_SIZE - 1 || blocks[blockPositionToIndex(x + 1, y, z)] == 0) ? 1 : -1;
             visibleFaces += (y == 0 || blocks[blockPositionToIndex(x, y - 1, z)] == 0) ? 1 : -1;
             visibleFaces += (y == CHUNK_SIZE - 1 || blocks[blockPositionToIndex(x, y + 1, z)] == 0) ? 1 : -1;
             visibleFaces += (z == 0 || blocks[blockPositionToIndex(x, y, z - 1)] == 0) ? 1 : -1;
-            visibleFaces += (z == CHUNK_SIZE - 1 || blocks[blockPositionToIndex(x, y, z + 1)] == 0) ? 1 : -1;
+            visibleFaces += (z == CHUNK_SIZE - 1 || blocks[blockPositionToIndex(x, y, z + 1)] == 0) ? 1 : -1;*/
 
 
 
@@ -454,12 +531,12 @@ public class ChunkData
             // Removed a block
             solidBlocks--;
 
-            visibleFaces += (x == 0 || blocks[blockPositionToIndex(x - 1, y, z)] == 0) ? -1 : 1;
+            /*visibleFaces += (x == 0 || blocks[blockPositionToIndex(x - 1, y, z)] == 0) ? -1 : 1;
             visibleFaces += (x == CHUNK_SIZE - 1 || blocks[blockPositionToIndex(x + 1, y, z)] == 0) ? -1 : 1;
             visibleFaces += (y == 0 || blocks[blockPositionToIndex(x, y - 1, z)] == 0) ? -1 : 1;
             visibleFaces += (y == CHUNK_SIZE - 1 || blocks[blockPositionToIndex(x, y + 1, z)] == 0) ? -1 : 1;
             visibleFaces += (z == 0 || blocks[blockPositionToIndex(x, y, z - 1)] == 0) ? -1 : 1;
-            visibleFaces += (z == CHUNK_SIZE - 1 || blocks[blockPositionToIndex(x, y, z + 1)] == 0) ? -1 : 1;
+            visibleFaces += (z == CHUNK_SIZE - 1 || blocks[blockPositionToIndex(x, y, z + 1)] == 0) ? -1 : 1;*/
 
         }
         else
@@ -480,12 +557,12 @@ public class ChunkData
 
         blocks[blockPositionToIndex(x, y, z)] = colour;
 
-        visibleFaces += (x == 0 || blocks[blockPositionToIndex(x - 1, y, z)] == 0) ? 1 : -1;
+        /*visibleFaces += (x == 0 || blocks[blockPositionToIndex(x - 1, y, z)] == 0) ? 1 : -1;
         visibleFaces += (x == CHUNK_SIZE - 1 || blocks[blockPositionToIndex(x + 1, y, z)] == 0) ? 1 : -1;
         visibleFaces += 1;
         visibleFaces += (y == CHUNK_SIZE - 1 || blocks[blockPositionToIndex(x, y + 1, z)] == 0) ? 1 : -1;
         visibleFaces += (z == 0 || blocks[blockPositionToIndex(x, y, z - 1)] == 0) ? 1 : -1;
-        visibleFaces += (z == CHUNK_SIZE - 1 || blocks[blockPositionToIndex(x, y, z + 1)] == 0) ? 1 : -1;
+        visibleFaces += (z == CHUNK_SIZE - 1 || blocks[blockPositionToIndex(x, y, z + 1)] == 0) ? 1 : -1;*/
 
 
     }

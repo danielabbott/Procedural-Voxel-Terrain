@@ -1,6 +1,7 @@
 ﻿using UnityEngine;
 using System.Runtime.InteropServices;
 
+// This class acts as an interface for the C++ DLL
 public class Noise
 {
 

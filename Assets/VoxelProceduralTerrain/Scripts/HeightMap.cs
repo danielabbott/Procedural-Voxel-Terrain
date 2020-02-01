@@ -9,14 +9,15 @@ public class HeightMap
     private int chunkX;
     private int chunkZ;
     public ushort maxValue = 0;
+    public ushort minValue = 9999;
 
     public HeightMap(int chunkX, int chunkZ)
     {
         this.chunkX = chunkX;
         this.chunkZ = chunkZ;
-        values = null;
     }
 
+    // TODO: Make thread-local
     private static float[,] baseTerrainNoiseData = new float[Constants.CHUNK_SIZE, Constants.CHUNK_SIZE];
     private static float[,] continentData = new float[Constants.CHUNK_SIZE, Constants.CHUNK_SIZE];
     private static float[,] mountainNoiseData = new float[Constants.CHUNK_SIZE, Constants.CHUNK_SIZE];
@@ -29,27 +30,27 @@ public class HeightMap
         }
 
         int CHUNK_SIZE = Constants.CHUNK_SIZE;
-        values = new ushort[CHUNK_SIZE, CHUNK_SIZE];
-
-        
+        values = new ushort[CHUNK_SIZE, CHUNK_SIZE];        
 
         float bsz = Constants.BLOCK_SIZE;
         World.baseTerrainNoise.generate(baseTerrainNoiseData, chunkX * CHUNK_SIZE, chunkZ * CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE, bsz, bsz, 0.02f, 2, 3, 0.8f);
         World.continentNoise.generate(continentData, chunkX * CHUNK_SIZE, chunkZ * CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE, bsz, bsz, 0.0001f, 4, 4, 0.2f);
-        World.mountainNoise.generate(mountainNoiseData, chunkX * CHUNK_SIZE, chunkZ * CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE, bsz * 0.01f, bsz * 0.01f);
+        World.mountainNoise.generate(mountainNoiseData, chunkX * CHUNK_SIZE, chunkZ * CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE, bsz, bsz, 0.00001f, 2);
 
 
         for (int x = 0; x < CHUNK_SIZE; x++)
         {
             for (int z = 0; z < CHUNK_SIZE; z++)
             {
+                // Grass, ocean floor
                 float baseTerrainNoiseSample = Mathf.Clamp((baseTerrainNoiseData[x, z] + 0.707f) / 1.414f, 0, 1);
 
-
+                // Controls where oceans and land are
                 float continentNoiseSample = Mathf.Clamp((continentData[x, z] + 0.707f) / 1.414f, 0, 1);
 
                 bool ocean = true;
 
+                // Flatten the graph so it is a line on y=0, then a slope, then y=1
                 if (continentNoiseSample > 0.75f)
                 {
                     ocean = false;
@@ -64,6 +65,7 @@ public class HeightMap
                     continentNoiseSample = 0.0f;
                 }
 
+                // TODO: Make mountains look more natural
                 float mountainPositionNoiseSample = Mathf.Clamp((mountainNoiseData[x, z] + 0.707f) / 1.414f, 0, 1);
                 if (mountainPositionNoiseSample > 0.8)
                 {
@@ -74,9 +76,14 @@ public class HeightMap
                     mountainPositionNoiseSample = 0.75f; // 0
                 }
                 mountainPositionNoiseSample = (mountainPositionNoiseSample - 0.75f) / 0.05f;
-                if(mountainPositionNoiseSample > 0.5f)
+                mountainPositionNoiseSample = Mathf.Sin(mountainPositionNoiseSample);
+                if (mountainPositionNoiseSample > 0.5f)
                 {
                     mountainPositionNoiseSample = 1.0f - mountainPositionNoiseSample;
+                }
+                if (mountainPositionNoiseSample > 0.48f)
+                {
+                    mountainPositionNoiseSample = 0.48f;
                 }
 
                 // h is in meters
@@ -109,6 +116,10 @@ public class HeightMap
                 if(h_ > maxValue)
                 {
                     maxValue = h_;
+                }
+                if (h_ < minValue)
+                {
+                    minValue = h_;
                 }
 
                 values[x, z] = h_;
