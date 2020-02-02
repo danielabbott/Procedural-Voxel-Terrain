@@ -13,7 +13,7 @@ public class TerrainGen : MonoBehaviour
 
     private static ChunkLoaderThread chunkLoaderThread = new ChunkLoaderThread();
 
-    private static Hashtable allChunks = new Hashtable();
+    private static Dictionary<ulong, Chunk> allChunks = new Dictionary<ulong, Chunk>();
 
     // Only used by rendering thread
     private static Queue<Chunk> chunksAwaitingObjectCreation = new Queue<Chunk>();
@@ -35,6 +35,7 @@ public class TerrainGen : MonoBehaviour
 
     // Producer: Chunk loader thread, Consumer: Render thread
     private static Queue<ChunkCreateMsg> chunksAwaitingMeshUpload = new Queue<ChunkCreateMsg>();
+    private static List<ChunkLoaderThread.ChunkRequest> ignoredRequests = new List<ChunkLoaderThread.ChunkRequest>();
 
     public struct ChunkCreateMsg
     {
@@ -73,6 +74,14 @@ public class TerrainGen : MonoBehaviour
             {
                 chunksAwaitingMeshUpload.Enqueue(q.Dequeue());
             }
+        }
+    }
+
+    public static void IgnoredChunkRequests(List<ChunkLoaderThread.ChunkRequest> ignoredRequests_)
+    {
+        lock (ignoredRequests)
+        {
+            ignoredRequests.AddRange(ignoredRequests_);
         }
     }
 
@@ -210,7 +219,7 @@ public class TerrainGen : MonoBehaviour
     private void setChunkGameObjectsVisibility()
     {
         Vector3Int p = getPlayerChunkPos();
-        foreach (DictionaryEntry pair in allChunks)
+        foreach (KeyValuePair<ulong, Chunk> pair in allChunks)
         {
             Chunk c = (Chunk)pair.Value;
             if (c.gameObject != null)
@@ -243,6 +252,28 @@ public class TerrainGen : MonoBehaviour
         }
     }
 
+    // If the chunk loader thread didn't load a chunk, this thread needs to set the
+    // destroyed flag in the chunk object so it knows to send a new request if the
+    // chunk is needed again
+    private void updateIgnoredChunks()
+    {
+        List<ChunkLoaderThread.ChunkRequest> copy = new List<ChunkLoaderThread.ChunkRequest>();
+
+        lock (ignoredRequests)
+        {
+            copy.AddRange(ignoredRequests);
+            ignoredRequests.Clear();
+        }
+
+        foreach (var r in copy)
+        {
+            if (allChunks.TryGetValue(Chunk.getHashKey1(r.cx, r.cy, r.cz), out Chunk c))
+            {
+                c.destroyed = true;
+            }
+        }
+    }
+
     // Find chunks within render distance which are not yet being loaded
     // and tell the chunk loader thread to load them
     private void loadNewChunks()
@@ -254,7 +285,6 @@ public class TerrainGen : MonoBehaviour
 
         if (!p.Equals(prevPlayerChunkPos))
         {
-
             for (int y_ = 0; y_ < Constants.RENDER_DISTANCE; y_++)
             {
                 // Alternate back and forth
@@ -298,7 +328,7 @@ public class TerrainGen : MonoBehaviour
                 }
             }
         }
-        chunkLoaderThread.queueChunks(toQueue);
+        chunkLoaderThread.queueChunks(toQueue, p);
         prevPlayerChunkPos = p;
     }
 
@@ -307,6 +337,7 @@ public class TerrainGen : MonoBehaviour
         createChunkGameObjects();
         createChunkMeshObjects();
         setChunkGameObjectsVisibility();
+        updateIgnoredChunks();
         loadNewChunks();
     }
 

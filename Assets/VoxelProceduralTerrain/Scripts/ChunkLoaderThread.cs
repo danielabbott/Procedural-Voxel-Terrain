@@ -24,29 +24,44 @@ public class ChunkLoaderThread
         }
     }
 
-    private Queue<ChunkRequest> queue = new Queue<ChunkRequest>();
+    private List<ChunkRequest> chunkRequests = new List<ChunkRequest>();
 
     // Called by main thread
-    public void queueChunk(ChunkRequest r)
+    // newRequests can be empty
+    public void queueChunks(Queue<ChunkRequest> newRequests, Vector3Int playerChunkPosition)
     {
-        lock (queue)
+        List<ChunkRequest> ignoredRequests = new List<ChunkRequest>();
+        lock (chunkRequests)
         {
-            queue.Enqueue(r);
-            Monitor.Pulse(queue);
-        }
-    }
-
-    // Called by main thread
-    // TODO Take current player chunk position as parameter and sort the queue (including chunks already in the queue) to prioritise nearer chunks
-    public void queueChunks(Queue<ChunkRequest> r)
-    {
-        lock (queue)
-        {
-            while (r.Count > 0)
+            // Remove chunks which are outside the render distance
+            for (int i = 0; i < chunkRequests.Count; i++)
             {
-                queue.Enqueue(r.Dequeue());
+                ChunkRequest r = chunkRequests[i];
+                int dist = (int)(playerChunkPosition - new Vector3Int(r.cx, r.cy, r.cz)).magnitude;
+                if (dist > Constants.RENDER_DISTANCE)
+                {
+                    ignoredRequests.Add(chunkRequests[i]);
+                    chunkRequests.RemoveAt(i);
+                }
             }
-            Monitor.Pulse(queue);
+
+            // Add new chunks - it is known that they are within the render distance
+            chunkRequests.InsertRange(0, newRequests);
+            newRequests.Clear();
+
+            chunkRequests.Sort(delegate (ChunkRequest x, ChunkRequest y)
+            {
+                int a = (int)(playerChunkPosition - new Vector3Int(x.cx, x.cy, x.cz)).magnitude;
+                int b = (int)(playerChunkPosition - new Vector3Int(y.cx, y.cy, y.cz)).magnitude;
+                return a - b;
+            });
+
+            Monitor.Pulse(chunkRequests);
+        }
+
+        if(ignoredRequests.Count > 0)
+        {
+            TerrainGen.IgnoredChunkRequests(ignoredRequests);
         }
     }
 
@@ -64,16 +79,18 @@ public class ChunkLoaderThread
         {
             
             Queue<ChunkRequest> queueCopy = new Queue<ChunkRequest>();
-            lock (queue)
+            lock (chunkRequests)
             {
                 //  Wait for chunk requests
-                while (queue.Count == 0 && !stopThread)
+                while (chunkRequests.Count == 0 && !stopThread)
                 {
-                    Monitor.Wait(queue);
+                    Monitor.Wait(chunkRequests);
                 }
+
                 // Copy
-                for (int i = 0; i < 3 && queue.Count > 0; i++) { 
-                    queueCopy.Enqueue(queue.Dequeue()); 
+                for (int i = 0; i < 3 && chunkRequests.Count > 0; i++) { 
+                    queueCopy.Enqueue(chunkRequests[0]);
+                    chunkRequests.RemoveAt(0);
                 }
             }
 

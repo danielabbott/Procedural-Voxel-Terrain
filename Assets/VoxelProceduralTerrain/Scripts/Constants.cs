@@ -22,6 +22,7 @@
     public static readonly float MOUNTAIN_HEIGHT = 140;
 
     // 0 = Only 1 chunk rendered
+    // Chunks are loaded in a sphere around the player
     public static readonly int RENDER_DISTANCE = 6;
 
     // Derived constants
