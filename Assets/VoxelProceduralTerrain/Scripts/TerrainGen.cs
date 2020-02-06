@@ -1,12 +1,15 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using UnityEngine;
 using UnityEngine.Profiling;
+using UnityTemplateProjects;
 
 public class TerrainGen : MonoBehaviour
 {
     public GameObject chunkPrefab;
+    public GameObject chunkFluidPrefab;
 
     private static Vector3Int prevPlayerChunkPos;
     private static Vector3Int playerChunkPosition;
@@ -19,6 +22,8 @@ public class TerrainGen : MonoBehaviour
     private static Queue<Chunk> chunksAwaitingObjectCreation = new Queue<Chunk>();
 
     //private static bool[,,] nearbyChunksLoaded = new bool[9, 5, 9];
+
+    private SimpleCameraController cameraControl;
 
     private static int chunkCoordsToLength(int x, int y, int z)
     {
@@ -42,10 +47,10 @@ public class TerrainGen : MonoBehaviour
         public int cx, cy, cz;
         public ChunkData chunkData;
 
-        // Used to tell the chunk loader thread that the mesh object can be reused
-        public int meshI;
+        // Used to tell the chunk loader thread that the mesh object(s) can be reused
+        public Vector2Int meshI;
 
-        public ChunkCreateMsg(int x, int y, int z, ChunkData c, int meshI_)
+        public ChunkCreateMsg(int x, int y, int z, ChunkData c, Vector2Int meshI_)
         {
             cx = x;
             cy = y;
@@ -85,7 +90,7 @@ public class TerrainGen : MonoBehaviour
         }
     }
 
-    void setWorldHeightMapAsTexture()
+    void setWorldHeightMapAsTexture(int chunkX, int chunkZ)
     {
         int CHUNK_SIZE = Constants.CHUNK_SIZE;
         Texture2D t = new Texture2D(4096, 4096);
@@ -96,7 +101,7 @@ public class TerrainGen : MonoBehaviour
         {
             for (int hz = 0; hz < heightMaps.GetLength(1); hz++)
             {
-                heightMaps[hx, hz] = World.getOrCreateHeightMap(hx - heightMaps.GetLength(0) / 2, hz - heightMaps.GetLength(0) / 2);
+                heightMaps[hx, hz] = World.getOrCreateHeightMap(hx - heightMaps.GetLength(0) / 2 + chunkX, hz - heightMaps.GetLength(0) / 2 + chunkZ);
                 heightMaps[hx, hz].generate(Constants.WORLD_SEED);
             }
         }
@@ -109,13 +114,14 @@ public class TerrainGen : MonoBehaviour
         {
             for (int x = 0; x < 4096; x++, i++)
             {
-                float v = heightMaps[x / CHUNK_SIZE, y / CHUNK_SIZE].values[x % CHUNK_SIZE, y % CHUNK_SIZE] / Constants.TERRAIN_MAX_HEIGHT;
+                float v = (heightMaps[x / CHUNK_SIZE, y / CHUNK_SIZE].values[x % CHUNK_SIZE, y % CHUNK_SIZE] & 0x7fff) / Constants.TERRAIN_MAX_HEIGHT;
                 c[i] = new Color(v, v, v);
             }
         }
         Profiler.EndSample();
         Profiler.BeginSample("upload data");
         t.SetPixels(c);
+        t.filterMode = FilterMode.Point;
         t.Apply();
         Profiler.EndSample();
         GetComponent<Renderer>().material.SetTexture("_BaseMap", t);
@@ -134,11 +140,12 @@ public class TerrainGen : MonoBehaviour
         {
             for (int x = 0; x < CHUNK_SIZE; x++, i++)
             {
-                float v = h.values[x, y] / Constants.TERRAIN_MAX_HEIGHT;
+                float v = (h.values[x, y] & 0x7fff) / Constants.TERRAIN_MAX_HEIGHT;
                 c[i] = new Color(v, v, v);
             }
         }
         t.SetPixels(c);
+        t.filterMode = FilterMode.Point;
         t.Apply();
 
         GetComponent<Renderer>().material.SetTexture("_BaseMap", t);
@@ -163,8 +170,10 @@ public class TerrainGen : MonoBehaviour
     {
         World.createNoiseObjects(Constants.WORLD_SEED);
         ChunkData.createMeshDataLists();
+        cameraControl = GameObject.Find("Main Camera").GetComponent<SimpleCameraController>();
 
-        //setWorldHeightMapAsTexture();
+        //setWorldHeightMapAsTexture(312, 160);
+        //setHeightMapAsTexture(312, 160);
         //return;
 
         prevPlayerChunkPos = getPlayerChunkPos();
@@ -176,18 +185,24 @@ public class TerrainGen : MonoBehaviour
 
     }
 
+    private GameObject createGO(Chunk c, GameObject prefab, Mesh mesh)
+    {
+        GameObject go = Instantiate(prefab);
+        go.GetComponent<MeshFilter>().mesh = mesh;
+        float scale = Constants.BLOCK_SIZE;
+        int CHUNK_SIZE = Constants.CHUNK_SIZE;
+        go.transform.localScale = new Vector3(scale, scale, scale);
+        go.transform.localPosition = new Vector3(c.cx * (float)CHUNK_SIZE * scale, c.cy * (float)CHUNK_SIZE * scale, c.cz * (float)CHUNK_SIZE * scale);
+        return go;
+    }
+
     // Create game objects
     private void createChunkGameObjects()
     {
         foreach (Chunk c in chunksAwaitingObjectCreation)
         {
-            GameObject go = Instantiate(chunkPrefab);
-            go.GetComponent<MeshFilter>().mesh = c.mesh;
-            float scale = Constants.BLOCK_SIZE;
-            int CHUNK_SIZE = Constants.CHUNK_SIZE;
-            go.transform.localScale = new Vector3(scale, scale, scale);
-            go.transform.localPosition = new Vector3(c.cx * (float)CHUNK_SIZE * scale, c.cy * (float)CHUNK_SIZE * scale, c.cz * (float)CHUNK_SIZE * scale);
-            c.gameObject = go;
+            if (c.mesh != null) c.gameObject = createGO(c, chunkPrefab, c.mesh);
+            if(c.fluidMesh != null) c.fluidGameObject = createGO(c, chunkFluidPrefab, c.fluidMesh);
         }
         chunksAwaitingObjectCreation.Clear();
     }
@@ -196,9 +211,10 @@ public class TerrainGen : MonoBehaviour
     private void createChunkMeshObjects()
     {
         // Copy queue
-        Queue<ChunkCreateMsg> toCreate = new Queue<ChunkCreateMsg>();
+        Queue<ChunkCreateMsg> toCreate;
         lock (chunksAwaitingMeshUpload)
         {
+            toCreate = new Queue<ChunkCreateMsg>(chunksAwaitingMeshUpload.Count);
             while (chunksAwaitingMeshUpload.Count > 0) toCreate.Enqueue(chunksAwaitingMeshUpload.Dequeue());
         }
 
@@ -206,10 +222,15 @@ public class TerrainGen : MonoBehaviour
         {
             Chunk c = (Chunk)allChunks[Chunk.getHashKey1(m.cx, m.cy, m.cz)];
             c.data = m.chunkData;
-            if (m.meshI >= 0)
+            if (m.meshI.x >= 0)
             {
                 // Create unity mesh object
-                c.mesh = c.data.createMesh(m.meshI);
+                c.mesh = c.data.createMesh(m.meshI.x);
+            }
+            if (m.meshI.y >= 0)
+            {
+                // Create unity mesh object
+                c.fluidMesh = c.data.createMesh(m.meshI.y);
             }
             chunksAwaitingObjectCreation.Enqueue(c);
         }
@@ -222,12 +243,12 @@ public class TerrainGen : MonoBehaviour
         foreach (KeyValuePair<ulong, Chunk> pair in allChunks)
         {
             Chunk c = (Chunk)pair.Value;
-            if (c.gameObject != null)
+            if (c.gameObject != null || c.fluidGameObject != null)
             {
                 if (c.distance(p.x, p.y, p.z) <= Constants.RENDER_DISTANCE)
                 {
                     // Within render distance
-                    c.gameObject.SetActive(true);
+                    c.SetActive(true);
                 }
                 else
                 {
@@ -236,16 +257,18 @@ public class TerrainGen : MonoBehaviour
                     if (c.distance(p.x, p.y, p.z) > Constants.RENDER_DISTANCE + 2)
                     {
                         // Well outside render distance, free resources
-                        Destroy(c.gameObject);
+                        if (c.gameObject != null) Destroy(c.gameObject);
+                        if(c.fluidGameObject != null) Destroy(c.fluidGameObject);
                         c.data = null;
                         c.mesh = null;
+                        c.fluidMesh = null;
                         c.destroyed = true;
                     }
                     else
                     {
                         // Not far out of render distance
                         // Make invisible but keep mesh and block data
-                        c.gameObject.SetActive(false);
+                        c.SetActive(false);
                     }
                 }
             }
@@ -278,13 +301,14 @@ public class TerrainGen : MonoBehaviour
     // and tell the chunk loader thread to load them
     private void loadNewChunks()
     {
-        Queue<ChunkLoaderThread.ChunkRequest> toQueue = new Queue<ChunkLoaderThread.ChunkRequest>();
 
         Vector3Int p = getPlayerChunkPos();
         playerChunkPosition = p;
 
         if (!p.Equals(prevPlayerChunkPos))
         {
+            Queue<ChunkLoaderThread.ChunkRequest> toQueue = new Queue<ChunkLoaderThread.ChunkRequest>();
+
             for (int y_ = 0; y_ < Constants.RENDER_DISTANCE; y_++)
             {
                 // Alternate back and forth
@@ -327,18 +351,67 @@ public class TerrainGen : MonoBehaviour
                     }
                 }
             }
+
+            // Get players direction in each axis (-1/0/1) and send chunk requests
+
+            Vector3Int playerDirection = new Vector3Int();
+            Vector3 rotation = cameraControl.GetRotation();
+            rotation.y %= 360.0f;
+            if (rotation.y < 0)
+            {
+                rotation.y += 360;
+            }
+
+            playerDirection.y = rotation.x > 15.0f ? -1 : (rotation.x > -15.0f ? 0 : 1);
+
+            if ((rotation.y > 360 - 15 || rotation.y < 15) || (rotation.y > 180 - 15 && rotation.y < 180 + 15))
+            {
+                playerDirection.x = 0;
+            }
+            else
+            {
+                playerDirection.x = rotation.y < 180 ? 1 : -1;
+            }
+
+            if ((rotation.y > 90 - 15 && rotation.y < 90 + 15) || (rotation.y > 270 - 15 && rotation.y < 270 + 15))
+            {
+                playerDirection.z = 0;
+            }
+            else
+            {
+                playerDirection.z = (rotation.y > 90 && rotation.y < 270) ? -1 : 1;
+            }
+
+            chunkLoaderThread.queueChunks(toQueue, p, playerDirection);
         }
-        chunkLoaderThread.queueChunks(toQueue, p);
+
+
+
         prevPlayerChunkPos = p;
     }
 
     void Update()
     {
+        Profiler.BeginSample("Create chunk game object");
         createChunkGameObjects();
+        Profiler.EndSample();
+
+        Profiler.BeginSample("Upload meshes");
         createChunkMeshObjects();
+        Profiler.EndSample();
+
+        Profiler.BeginSample("Set game objects visibility");
         setChunkGameObjectsVisibility();
+        Profiler.EndSample();
+
+        Profiler.BeginSample("Update ignored chunks");
         updateIgnoredChunks();
+        Profiler.EndSample();
+
+        Profiler.BeginSample("Load new chunks");
         loadNewChunks();
+        Profiler.EndSample();
+
     }
 
     void OnApplicationQuit()

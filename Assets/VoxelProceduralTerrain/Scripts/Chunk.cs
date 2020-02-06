@@ -12,7 +12,10 @@ public class Chunk
 
     public ChunkData data = null;
     public Mesh mesh = null;
+    public Mesh fluidMesh = null;
     public GameObject gameObject = null;
+    public GameObject fluidGameObject = null;
+    private Boolean gameObjectActive = true;
 
     // Set to true when chunk goes out of render distance and gameObject and data are set to null
     // Set back to false if the chunk is regenerated
@@ -44,5 +47,15 @@ public class Chunk
     public ulong getHashKey()
     {
         return getHashKey1(cx, cy, cz);
+    }
+
+    public void SetActive(Boolean active)
+    {
+        if (gameObjectActive != active)
+        {
+            if (gameObject != null) gameObject.SetActive(active);
+            if (fluidGameObject != null) fluidGameObject.SetActive(active);
+            gameObjectActive = active;
+        }
     }
 }

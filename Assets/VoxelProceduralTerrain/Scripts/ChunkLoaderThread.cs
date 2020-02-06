@@ -22,13 +22,35 @@ public class ChunkLoaderThread
             cy = y;
             cz = z;
         }
+
+        public int GetPriority(Vector3Int playerChunkPosition, Vector3Int playerDirection)
+        {
+            Vector3Int playerToChunk = new Vector3Int(cx, cy, cz) - playerChunkPosition;
+            if(playerToChunk.x == 0 && (playerToChunk.y == 0 || playerToChunk.y == -1) && playerToChunk.z == 0)
+            {
+                return 0;
+            }
+
+            Vector3Int chunkDirection = playerToChunk;
+            chunkDirection.Clamp(new Vector3Int(-1, -1, -1), new Vector3Int(1, 1, 1));
+
+            int a = (int)playerToChunk.magnitude;
+            if(a > 1)
+            {
+                a += 5;
+            }
+            a += chunkDirection.x == playerDirection.x ? 0 : 2;
+            a += chunkDirection.y == playerDirection.y ? 0 : 2;
+            a += chunkDirection.z == playerDirection.z ? 0 : 2;
+            return a;
+        }
     }
 
     private List<ChunkRequest> chunkRequests = new List<ChunkRequest>();
 
     // Called by main thread
     // newRequests can be empty
-    public void queueChunks(Queue<ChunkRequest> newRequests, Vector3Int playerChunkPosition)
+    public void queueChunks(Queue<ChunkRequest> newRequests, Vector3Int playerChunkPosition, Vector3Int playerDirection)
     {
         List<ChunkRequest> ignoredRequests = new List<ChunkRequest>();
         lock (chunkRequests)
@@ -51,8 +73,8 @@ public class ChunkLoaderThread
 
             chunkRequests.Sort(delegate (ChunkRequest x, ChunkRequest y)
             {
-                int a = (int)(playerChunkPosition - new Vector3Int(x.cx, x.cy, x.cz)).magnitude;
-                int b = (int)(playerChunkPosition - new Vector3Int(y.cx, y.cy, y.cz)).magnitude;
+                int a = x.GetPriority(playerChunkPosition, playerDirection);
+                int b = y.GetPriority(playerChunkPosition, playerDirection);
                 return a - b;
             });
 
@@ -109,11 +131,11 @@ public class ChunkLoaderThread
                 c.generate(h);
 
                 // Mesh
-                int meshI = -1;
+                Vector2Int meshI = new Vector2Int(-1, -1);
                 if (!c.isAir())
                 {
                     meshI = c.generateMesh();
-                    while (meshI == -1 && !stopThread)
+                    while ((meshI.x == -1 && meshI.y == -1) && !stopThread)
                     {
                         // Wait for the main thread to finish with one of the mesh data objects
                         if (done.Count > 0)

@@ -10,6 +10,7 @@ public class HeightMap
     private int chunkZ;
     public ushort maxValue = 0;
     public ushort minValue = 9999;
+    public bool hasOcean = false;
 
     public HeightMap(int chunkX, int chunkZ)
     {
@@ -51,6 +52,7 @@ public class HeightMap
                 bool ocean = true;
 
                 // Flatten the graph so it is a line on y=0, then a slope, then y=1
+                // TODO terrain glitch at seed 353464, chunk 312, 160.
                 if (continentNoiseSample > 0.75f)
                 {
                     ocean = false;
@@ -63,6 +65,11 @@ public class HeightMap
                 else
                 {
                     continentNoiseSample = 0.0f;
+                }
+
+                if(ocean)
+                {
+                   hasOcean = true;
                 }
 
                 // TODO: Make mountains look more natural
@@ -103,10 +110,10 @@ public class HeightMap
                 // Add mountain ranges
                 h += mountainPositionNoiseSample * (Constants.MOUNTAIN_HEIGHT - Constants.TERRAIN_HEIGHT - Constants.OCEAN_FLOOR_HEIGHT);
 
-                /*if(h > Constants.TERRAIN_MAX_HEIGHT)
+                if (h > Constants.TERRAIN_MAX_HEIGHT)
                 {
                     h = Constants.TERRAIN_MAX_HEIGHT;
-                }*/
+                }
                 if (h < 0.0f)
                 {
                     h = 0.0f;

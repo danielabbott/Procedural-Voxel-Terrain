@@ -9,7 +9,7 @@
     // Controls the detail in the terrain
     public static readonly float BLOCK_SIZE = 1.0f;
 
-    // Height in metres that the grass starts at
+    // Height in metres that the grass starts at and sea level is at
     public static readonly float TERRAIN_HEIGHT = 60;
 
     // Height in metres that the ocean floor starts at
@@ -27,7 +27,9 @@
 
     // Derived constants
 
-    // ish
-    public static readonly float TERRAIN_MAX_HEIGHT = TERRAIN_HEIGHT + MOUNTAIN_HEIGHT + 5;
+    public static readonly float TERRAIN_MAX_HEIGHT = MOUNTAIN_HEIGHT + 5;
+
+    public static readonly float SEA_LEVEL = TERRAIN_HEIGHT-1;
+    public static readonly int SEA_LEVEL_BLOCKS = (int)(SEA_LEVEL/BLOCK_SIZE);
 
 }

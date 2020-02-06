@@ -164,6 +164,11 @@ namespace UnityTemplateProjects
 
             m_InterpolatingCameraState.UpdateTransform(transform);
         }
+        public Vector3 GetRotation()
+        {
+            return new Vector3(m_InterpolatingCameraState.pitch, m_InterpolatingCameraState.yaw, m_InterpolatingCameraState.roll);
+        }
     }
+
 
 }

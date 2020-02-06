@@ -13,7 +13,7 @@ public class ChunkData
 
     int fluidBlocks = 0;
 
-    // If bit 31 is 1 then it is fluid, else solid
+    // If bit 31 is 1 then it is solid, else fluid
     // Bits 0 - 24 are the colour
     uint[] blocks = null;
 
@@ -44,18 +44,18 @@ public class ChunkData
         return solidBlocks == 0 && fluidBlocks == 0;
     }
 
-    private static readonly int[,] layers = new int[,] {
+    private static readonly uint[,] layers = new uint[,] {
     {
         // From top to bottom
-        1, 0x77e08e, // Grass
-        3, 0x4d679e, // Soil
-        2, 0x27395e, // Darker Soil
-        2000000000, 0xd0d0d0, // Stone
+        1, 0x8077e08e, // Grass
+        3, 0x804d679e, // Soil
+        2, 0x8027395e, // Darker Soil
+        2000000000, 0x80d0d0d0, // Stone
     },
     {
         // Ocean terrain
-        6, 0x27395e, // Darker Soil
-        2000000000, 0xd0d0d0, // Stone
+        6, 0x8027395e, // Darker Soil
+        2000000000, 0x80d0d0d0, // Stone
         0, 0,
         0, 0,
     }
@@ -70,7 +70,14 @@ public class ChunkData
             throw new System.ArgumentException("Heightmap not generated");
         }
 
-        if (heightMap == null || heightMap.maxValue < cy * CHUNK_SIZE)
+        if (heightMap == null)
+        {
+            return;
+        }
+
+
+        if ((!heightMap.hasOcean && heightMap.maxValue < cy * CHUNK_SIZE)
+                    || (heightMap.hasOcean && heightMap.maxValue < cy * CHUNK_SIZE && Constants.SEA_LEVEL < cy * CHUNK_SIZE))
         {
             return;
         }
@@ -85,44 +92,54 @@ public class ChunkData
                 // For each column, start at the topmost block and fill downwards
 
                 ushort h_ = heightMap.values[x, z];
+                bool ocean = (h_ & 0x8000) != 0;
                 int h = h_ & 0x7fff;
 
-                if (h < cy * CHUNK_SIZE)
+                if (ocean && Constants.SEA_LEVEL_BLOCKS >= cy * CHUNK_SIZE)
                 {
-                    // This column is air.
-                    continue;
-                }
-
-                // Index into layers array (normal layers / ocean floor layers)
-                int l = ((h_ & 0x8000) != 0) ? 1 : 0;
-
-                int i = h;
-                int layerIndex = 0;
-                int layerBlocksRemaining = layers[l, 0];
-                for (; i >= cy * CHUNK_SIZE; i--)
-                {
-
-                    if (i < (cy + 1) * CHUNK_SIZE)
+                    int j = Constants.SEA_LEVEL_BLOCKS;
+                    if(j >= (cy + 1) * CHUNK_SIZE)
                     {
-                        initialSetBlock(x, i - cy * CHUNK_SIZE, z, (uint)layers[l, layerIndex * 2 + 1]);
+                        j = (cy + 1) * CHUNK_SIZE - 1;
                     }
-
-                    layerBlocksRemaining--;
-
-                    if (layerBlocksRemaining == 0)
+                    for (; j > h && j >= cy * CHUNK_SIZE; j--)
                     {
-                        layerIndex += 1;
-                        layerBlocksRemaining = layers[l, layerIndex * 2];
+                        initialSetBlock(x, j - cy * CHUNK_SIZE, z, 0x00e03010);
+                        fluidBlocks++;
                     }
                 }
-                // Keep track of how many blocks have been generated
-                solidBlocks += h - cy * CHUNK_SIZE;
 
+                if (h >= cy * CHUNK_SIZE)
+                {
+                    // Index into layers array (normal layers / ocean floor layers)
+                    int l = ocean ? 1 : 0;
+
+                    int i = h;
+                    int layerIndex = 0;
+                    uint layerBlocksRemaining = layers[l, 0];
+                    for (; i >= cy * CHUNK_SIZE; i--)
+                    {
+
+                        if (i < (cy + 1) * CHUNK_SIZE)
+                        {
+                            initialSetBlock(x, i - cy * CHUNK_SIZE, z, (uint)layers[l, layerIndex * 2 + 1]);
+                            solidBlocks++;
+                        }
+
+                        layerBlocksRemaining--;
+
+                        if (layerBlocksRemaining == 0)
+                        {
+                            layerIndex += 1;
+                            layerBlocksRemaining = layers[l, layerIndex * 2];
+                        }
+                    }
+                }
 
             }
         }
 
-        if (solidBlocks == 0)
+        if (solidBlocks == 0 && fluidBlocks == 0)
         {
             // Chunk was air, free memory.
             blocks = null;
@@ -281,42 +298,154 @@ public class ChunkData
         }
     }
 
-
-    public int generateMesh()
+    private void DoMeshRow(int blockIndex, int face, int layer, MeshData md, bool fluid)
     {
+        // Keep track of how many faces of the same colour are in a row
+        // They are combined into one
+        // A 'block strip' is multiple square block faces combined into a rectangle
+        uint blockStripColour = 0;
+        int blockStripLength = 0;
+        Vector3Int blockStripStart = new Vector3Int();
+
+        for (int j = 0; j < CHUNK_SIZE; j++, blockIndex += nextBlockIncrements[face])
+        {
+            // For each face in the row
+
+            uint thisBlock = blocks[blockIndex];
+            uint adjacentBlock = 0;
+            if (layer > 0)
+            {
+                adjacentBlock = blocks[blockIndex - nextLayerIncrements[face]];
+            }
+
+            if ( (!fluid && (thisBlock & 0x80000000) != 0 && (adjacentBlock & 0x80000000) == 0)
+                || (fluid && (thisBlock & 0x80000000) == 0 && thisBlock != 0 && adjacentBlock == 0))
+            {
+                // This face is visible
+
+                if (blockStripLength == 0)
+                {
+                    // Start of strip
+
+                    blockStripLength = 1;
+                    blockStripColour = thisBlock;
+                    blockStripStart = blockIndexToPosition(blockIndex);
+                    blockStripStart.x += blockLayerOffset[face, 0];
+                    blockStripStart.y += blockLayerOffset[face, 1];
+                    blockStripStart.z += blockLayerOffset[face, 2];
+                }
+                else if (blockStripColour == thisBlock)
+                {
+                    // Continue strip
+
+                    blockStripLength++;
+                }
+                else
+                {
+                    // New strip
+
+                    // Add previous strip
+                    meshAddFace(face, blockIndex, md.tris, md.vertices, md.normals, md.colourArray, blockStripLength, blockStripColour, blockStripStart);
+
+                    // New strip
+                    blockStripLength = 1;
+                    blockStripColour = thisBlock;
+                    blockStripStart = blockIndexToPosition(blockIndex);
+                    blockStripStart.x += blockLayerOffset[face, 0];
+                    blockStripStart.y += blockLayerOffset[face, 1];
+                    blockStripStart.z += blockLayerOffset[face, 2];
+                }
+            }
+            else if (blockStripLength != 0)
+            {
+                // End of strip
+                meshAddFace(face, blockIndex, md.tris, md.vertices, md.normals, md.colourArray, blockStripLength, blockStripColour, blockStripStart);
+                blockStripLength = 0;
+            }
+
+
+        }
+        if (blockStripLength != 0)
+        {
+            // Add last strip
+            meshAddFace(face, blockIndex, md.tris, md.vertices, md.normals, md.colourArray, blockStripLength, blockStripColour, blockStripStart);
+        }
+    }
+
+
+    // Returns (solid blocks mesh, fluids mesh)
+    public Vector2Int generateMesh()
+    {
+        if (solidBlocks == 0 && fluidBlocks == 0)
+        {
+            return new Vector2Int(-1, -1);
+        }
+
         int CHUNK_SIZE = Constants.CHUNK_SIZE;
 
         MeshData md = null;
         int mdI = -1;
 
+        MeshData mdFluid = null;
+        int mdFluidI = -1;
+
         // Find a mesh data object to fill
         lock (meshDataInUse)
         {
-            for (int i = 0; i < 6; i++)
+            int i = 0;
+            if (solidBlocks > 0)
             {
-                if (!meshDataInUse[i])
+                for (; i < 6; i++)
                 {
-                    meshDataInUse[i] = true;
-                    md = meshDataObjects[i];
-                    mdI = i;
-                    break;
+                    if (!meshDataInUse[i])
+                    {
+                        meshDataInUse[i] = true;
+                        md = meshDataObjects[i];
+                        mdI = i;
+                        break;
+                    }
+                }
+            }
+            if (fluidBlocks > 0)
+            {
+                for (; i < 6; i++)
+                {
+                    if (!meshDataInUse[i])
+                    {
+                        meshDataInUse[i] = true;
+                        mdFluid = meshDataObjects[i];
+                        mdFluidI = i;
+                        break;
+                    }
                 }
             }
         }
 
-        if (md == null)
+        if ((solidBlocks > 0 && md == null) || (fluidBlocks > 0 && mdFluid == null))
         {
-            // No mesh data objects available
+            // Not enough mesh data objects available
+
+            if (md != null) meshDataInUse[mdI] = false;
+            if (mdFluid != null) meshDataInUse[mdFluidI] = false;
             // Return error (-1)
-            return -1;
+            return new Vector2Int(-1, -1);
         }
 
+        if(md != null)
+        {
+            md.vertices.Clear();
+            md.normals.Clear();
+            md.tris.Clear();
+            md.colourArray.Clear();
+        }
 
-        md.vertices.Clear();
-        md.normals.Clear();
-        md.tris.Clear();
-        md.colourArray.Clear();
-
+        if (mdFluid != null)
+        {
+            mdFluid.vertices.Clear();
+            mdFluid.normals.Clear();
+            mdFluid.tris.Clear();
+            mdFluid.colourArray.Clear();
+        }
 
 
         for (int face = 0; face < 6; face++)
@@ -334,76 +463,14 @@ public class ChunkData
                 {
                     // For each row of faces
 
-                    // Keep track of how many faces of the same colour are in a row
-                    // They are combined into one
-                    // A 'block strip' is multiple square block faces combined into a rectangle
-                    uint blockStripColour = 0;
-                    int blockStripLength = 0;
-                    Vector3Int blockStripStart = new Vector3Int();
-
-                    for (int j = 0; j < CHUNK_SIZE; j++, blockIndex += nextBlockIncrements[face])
+                    if (md != null)
                     {
-                        // For each face in the row
-
-                        uint thisBlock = blocks[blockIndex];
-                        uint adjacentBlock = 0;
-                        if (layer > 0)
-                        {
-                            adjacentBlock = blocks[blockIndex - nextLayerIncrements[face]];
-                        }
-
-                        if (thisBlock != 0 && adjacentBlock == 0)
-                        {
-                            // This face is visible
-
-                            if (blockStripLength == 0)
-                            {
-                                // Start of strip
-
-                                blockStripLength = 1;
-                                blockStripColour = thisBlock;
-                                blockStripStart = blockIndexToPosition(blockIndex);
-                                blockStripStart.x += blockLayerOffset[face, 0];
-                                blockStripStart.y += blockLayerOffset[face, 1];
-                                blockStripStart.z += blockLayerOffset[face, 2];
-                            }
-                            else if (blockStripColour == thisBlock)
-                            {
-                                // Continue strip
-
-                                blockStripLength++;
-                            }
-                            else
-                            {
-                                // New strip
-
-                                // Add previous strip
-                                meshAddFace(face, blockIndex, md.tris, md.vertices, md.normals, md.colourArray, blockStripLength, blockStripColour, blockStripStart);
-                                
-                                // New strip
-                                blockStripLength = 1;
-                                blockStripColour = thisBlock;
-                                blockStripStart = blockIndexToPosition(blockIndex);
-                                blockStripStart.x += blockLayerOffset[face, 0];
-                                blockStripStart.y += blockLayerOffset[face, 1];
-                                blockStripStart.z += blockLayerOffset[face, 2];
-                            }
-                        }
-                        else if (blockStripLength != 0)
-                        {
-                            // End of strip
-                            meshAddFace(face, blockIndex, md.tris, md.vertices, md.normals, md.colourArray, blockStripLength, blockStripColour, blockStripStart);
-                            blockStripLength = 0;
-                        }
-
-
+                        DoMeshRow(blockIndex, face, layer, md, false);
                     }
-                    if (blockStripLength != 0)
+                    if (mdFluid != null)
                     {
-                        // Add last strip
-                        meshAddFace(face, blockIndex, md.tris, md.vertices, md.normals, md.colourArray, blockStripLength, blockStripColour, blockStripStart);
+                        DoMeshRow(blockIndex, face, layer, mdFluid, true);
                     }
-                    blockIndex -= CHUNK_SIZE * nextBlockIncrements[face];
                     blockIndex += nextRowIncrements[face];
                 }
                 blockIndex -= CHUNK_SIZE * nextRowIncrements[face];
@@ -411,7 +478,7 @@ public class ChunkData
             }
         }
 
-        return mdI;
+        return new Vector2Int(mdI, mdFluidI);
     }
 
     public Mesh createMesh(int i)
@@ -509,7 +576,7 @@ public class ChunkData
         uint old = blocks[blockPositionToIndex(x, y, z)];
         blocks[blockPositionToIndex(x, y, z)] = colour;
 
-        if (old == 0 && colour != 0)
+        if ((old & 0x80000000) == 0 && (colour & 0x80000000) != 0)
         {
             // Placed a block
             solidBlocks++;
@@ -526,7 +593,7 @@ public class ChunkData
 
 
         }
-        else if (old != 0 && colour == 0)
+        else if ((old & 0x80000000) != 0 && (colour & 0x80000000) == 0)
         {
             // Removed a block
             solidBlocks--;
@@ -557,7 +624,9 @@ public class ChunkData
 
         blocks[blockPositionToIndex(x, y, z)] = colour;
 
-        /*visibleFaces += (x == 0 || blocks[blockPositionToIndex(x - 1, y, z)] == 0) ? 1 : -1;
+        /*
+        // TODO does not account for fluid blocks
+        visibleFaces += (x == 0 || blocks[blockPositionToIndex(x - 1, y, z)] == 0) ? 1 : -1;
         visibleFaces += (x == CHUNK_SIZE - 1 || blocks[blockPositionToIndex(x + 1, y, z)] == 0) ? 1 : -1;
         visibleFaces += 1;
         visibleFaces += (y == CHUNK_SIZE - 1 || blocks[blockPositionToIndex(x, y + 1, z)] == 0) ? 1 : -1;
