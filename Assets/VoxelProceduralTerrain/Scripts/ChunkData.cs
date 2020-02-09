@@ -312,7 +312,7 @@ public class ChunkData
             // For each face in the row
 
             uint thisBlock = blocks[blockIndex];
-            uint adjacentBlock = 0;
+            uint adjacentBlock = fluid ? 0x80000000 : 0;
             if (layer > 0)
             {
                 adjacentBlock = blocks[blockIndex - nextLayerIncrements[face]];

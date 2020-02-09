@@ -5,6 +5,7 @@ using System.IO;
 using UnityEngine;
 using UnityEngine.Profiling;
 using UnityTemplateProjects;
+using UnityEngine.Rendering;
 
 public class TerrainGen : MonoBehaviour
 {
@@ -24,6 +25,8 @@ public class TerrainGen : MonoBehaviour
     //private static bool[,,] nearbyChunksLoaded = new bool[9, 5, 9];
 
     private SimpleCameraController cameraControl;
+
+    private UnityEngine.UI.RawImage fluidOverlay;
 
     private static int chunkCoordsToLength(int x, int y, int z)
     {
@@ -168,6 +171,8 @@ public class TerrainGen : MonoBehaviour
 
     void Start()
     {
+        fluidOverlay = GameObject.Find("Canvas").transform.Find("FluidOverlay").GetComponent<UnityEngine.UI.RawImage>();
+
         World.createNoiseObjects(Constants.WORLD_SEED);
         ChunkData.createMeshDataLists();
         cameraControl = GameObject.Find("Main Camera").GetComponent<SimpleCameraController>();
@@ -390,6 +395,44 @@ public class TerrainGen : MonoBehaviour
         prevPlayerChunkPos = p;
     }
 
+    private Vector3Int playerBlockCoordinates()
+    {
+        Vector3 playerPosition = Camera.main.transform.position;
+        int x = (int)playerPosition.x;
+        if (x < 0) x--;
+        int y = (int)playerPosition.y;
+        if (y < 0) y--;
+        int z = (int)playerPosition.z;
+        if (z < 0) z--;
+        return new Vector3Int(x, y, z);
+    }
+
+    private uint playerInBlock()
+    {
+        Vector3Int blockPos = playerBlockCoordinates();
+
+        Chunk chunk;
+        if(allChunks.TryGetValue(Chunk.getHashKey1(playerChunkPosition.x, playerChunkPosition.y, playerChunkPosition.z), out chunk))
+        {
+            if(chunk.data != null && !chunk.data.isAir())
+            {
+                int x = blockPos.x;
+                int y = blockPos.y;
+                int z = blockPos.z;
+
+                if (x >= 0) x = x % Constants.CHUNK_SIZE;
+                else x = Constants.CHUNK_SIZE + ((x + 1) % Constants.CHUNK_SIZE);
+                if (y >= 0) y = y % Constants.CHUNK_SIZE;
+                else y = Constants.CHUNK_SIZE + ((y + 1) % Constants.CHUNK_SIZE);
+                if (z >= 0) z = z % Constants.CHUNK_SIZE;
+                else z = Constants.CHUNK_SIZE + ((z + 1) % Constants.CHUNK_SIZE);
+
+                return chunk.data.getBlock(x, y, z);
+            }
+        }
+        return 0;
+    }
+
     void Update()
     {
         Profiler.BeginSample("Create chunk game object");
@@ -411,6 +454,23 @@ public class TerrainGen : MonoBehaviour
         Profiler.BeginSample("Load new chunks");
         loadNewChunks();
         Profiler.EndSample();
+
+        uint block = playerInBlock();
+        if (block != 0 && (block & 0x80000000) == 0)
+        {
+            fluidOverlay.enabled = true;
+            fluidOverlay.color = new Color(
+                (block & 0xff) / 255.0f,
+                ((block >> 8) & 0xff) / 255.0f,
+                ((block >> 16) & 0xff) / 255.0f,
+                0.5f
+                );
+            // TODO make the effect fade in
+        }
+        else
+        {
+            fluidOverlay.enabled = false;
+        }
 
     }
 
