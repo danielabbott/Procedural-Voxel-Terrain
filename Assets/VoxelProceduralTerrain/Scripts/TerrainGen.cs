@@ -465,10 +465,15 @@ public class TerrainGen : MonoBehaviour
                 ((block >> 16) & 0xff) / 255.0f,
                 0.5f
                 );
+            RenderSettings.fogColor = new Color(fluidOverlay.color.r*0.6f, fluidOverlay.color.g * 0.6f, fluidOverlay.color.b * 0.6f);
+            RenderSettings.fogDensity = 0.04f;
             // TODO make the effect fade in
         }
         else
         {
+            RenderSettings.fogDensity = 0.015f;
+            RenderSettings.fogColor = new Color(0.7328231f, 0.8327832f, 0.86792450f);
+           
             fluidOverlay.enabled = false;
         }
 
